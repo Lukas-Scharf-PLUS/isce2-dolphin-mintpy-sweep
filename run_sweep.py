@@ -4,7 +4,7 @@ Usage::
 
     python run_sweep.py <sweep.yaml>                 # run all unfinished experiments
     python run_sweep.py <sweep.yaml> --dry-run       # only check and list them
-    python run_sweep.py <sweep.yaml> --clean-stale   # delete old dolphin/mintpy/subpixel outputs first
+    python run_sweep.py <sweep.yaml> --clean-stale   # delete leftover outputs the sweep cannot vouch for
 """
 
 import argparse
@@ -22,9 +22,9 @@ def parse_arguments(argv=None):
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("sweep_file", help="Sweep YAML file (default config + experiments).")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Check everything and list the experiments, but run nothing.")
+                        help="Check everything and list the run order (dolphin computed or reused), but run nothing.")
     parser.add_argument("--clean-stale", action="store_true",
-                        help="Delete dolphin/, mintpy/ and subpixel/ left over from an earlier run before starting.")
+                        help="Delete leftover mintpy/, subpixel/ and incomplete dolphin/ outputs before starting.")
     return parser.parse_args(argv)
 
 

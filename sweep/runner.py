@@ -3,11 +3,20 @@
 For every experiment that is not finished yet:
 
 1. write its full pipeline config (default + changes) into its results folder,
-2. run the pipeline steps crop, dolphin, mintpy and subpixel (the pipeline
+2. dolphin stage: if the work directory holds a complete dolphin output made
+   with the same dolphin settings (every section except mintpy and subpixel),
+   reuse it; otherwise delete crop/ and dolphin/ and run the pipeline steps
+   crop and dolphin, then record their settings (see ``work_dir.py``),
+3. MintPy stage: run the pipeline steps mintpy and subpixel (the pipeline
    skips subpixel unless ``subpixel.enabled: true``),
-3. export the result with the postprocessing (Parquet + metadata JSON),
-4. save the experiment's part of the pipeline logs and the ``keep_paths``,
-5. write the ``DONE`` marker, then delete crop/, dolphin/, mintpy/ and subpixel/.
+4. export the result with the postprocessing (Parquet + metadata JSON),
+5. save the experiment's part of the pipeline logs and the ``keep_paths``,
+6. write the ``DONE`` marker, then delete mintpy/ and subpixel/.
+
+Experiments with the same dolphin settings run one after another (otherwise in
+sweep-file order), so dolphin runs once per distinct dolphin setting. After the
+last experiment, crop/ and dolphin/ are deleted too, unless
+``keep_dolphin_after_sweep`` is set.
 
 Before the first experiment, every experiment config is checked with the
 pipeline's own config loader, so a typo fails at once and not after hours.
@@ -27,16 +36,24 @@ from pathlib import Path
 
 from .sweep_config import build_experiment_config, read_yaml, write_yaml
 from .work_dir import (
+    DOLPHIN_STAGE_DIRS,
+    MINTPY_STAGE_DIRS,
     check_isce_finished,
+    dolphin_settings_key,
     find_stale_outputs,
     free_space_gb,
+    read_dolphin_settings,
     remove_experiment_outputs,
+    remove_outputs,
+    save_dolphin_settings,
+    saved_dolphin_settings_key,
 )
 
 logger = logging.getLogger(__name__)
 
+DOLPHIN_STAGE_STEPS = ("crop", "dolphin")
 # subpixel only runs with subpixel.enabled: true; otherwise the pipeline logs a skip.
-PIPELINE_STEPS = ("crop", "dolphin", "mintpy", "subpixel")
+MINTPY_STAGE_STEPS = ("mintpy", "subpixel")
 PIPELINE_MODULE = "isce_dolphin_mintpy"
 POSTPROCESSING_SCRIPT = "run_postprocessing.py"
 
@@ -81,6 +98,42 @@ class ExperimentPlan:
     def is_done(self):
         """True if this experiment finished in an earlier sweep run."""
         return (self.results_dir / DONE_FILE_NAME).exists()
+
+    @property
+    def dolphin_key(self):
+        """The settings that determine this experiment's crop and dolphin output."""
+        return dolphin_settings_key(self.config)
+
+
+def order_for_dolphin_reuse(plans):
+    """Return the plans grouped by dolphin settings, otherwise in their original order.
+
+    Groups appear in the order of their first experiment, so a sweep file with
+    the experiments A(dolphin x), B(dolphin y), C(dolphin x) runs A, C, B and
+    computes dolphin twice instead of three times.
+    """
+    groups = {}
+    for plan in plans:
+        groups.setdefault(plan.dolphin_key, []).append(plan)
+    return [plan for group in groups.values() for plan in group]
+
+
+def plan_dolphin_reuse(plans, existing_key):
+    """Return for each plan (in order) whether its dolphin output can be reused.
+
+    Parameters
+    ----------
+    plans : list of ExperimentPlan
+        The experiments in run order.
+    existing_key : str or None
+        Settings key of the complete dolphin output already in the work dir.
+    """
+    reuse = []
+    current_key = existing_key
+    for plan in plans:
+        reuse.append(plan.dolphin_key == current_key)
+        current_key = plan.dolphin_key
+    return reuse
 
 
 def plan_experiments(sweep):
@@ -259,6 +312,45 @@ def prepare_results_dir(plan):
     plan.results_dir.mkdir(parents=True)
 
 
+def run_pipeline_steps(sweep, plan, config_file, steps):
+    """Run some pipeline steps for an experiment.
+
+    Raises
+    ------
+    SweepError
+        If the pipeline fails.
+    """
+    run_command([sweep.pipeline.python, "-m", PIPELINE_MODULE, "run", config_file,
+                 "--steps", *steps, *sweep.pipeline.extra_args],
+                cwd=sweep.pipeline.repo, log_message=f"[{plan.name}] pipeline {' '.join(steps)}")
+
+
+def run_dolphin_stage(sweep, plan, config_file, work_dir):
+    """Reuse the dolphin output if its settings match, otherwise compute it.
+
+    Returns
+    -------
+    tuple (bool, str)
+        Whether the output was reused, and the name of the experiment whose run
+        computed it (can be this experiment's own earlier, failed attempt).
+    """
+    if saved_dolphin_settings_key(work_dir) == plan.dolphin_key:
+        computed_by = read_dolphin_settings(work_dir)["computed_by_experiment"]
+        logger.info("[%s] dolphin settings unchanged: reusing crop/ and dolphin/ from '%s'",
+                    plan.name, computed_by)
+        return True, computed_by
+
+    # Another setting's output, or an incomplete one: crop/ could also hold another
+    # stride's window, so both are rebuilt.
+    removed = remove_outputs(work_dir, DOLPHIN_STAGE_DIRS)
+    if removed:
+        logger.info("[%s] dolphin settings changed: deleted %s", plan.name,
+                    ", ".join(path.name for path in removed))
+    run_pipeline_steps(sweep, plan, config_file, DOLPHIN_STAGE_STEPS)
+    save_dolphin_settings(work_dir, plan.config, plan.name)
+    return False, plan.name
+
+
 def run_experiment(sweep, plan, work_dir):
     """Run the full workflow for one experiment (see the module docstring).
 
@@ -273,13 +365,13 @@ def run_experiment(sweep, plan, work_dir):
     write_yaml(plan.config, config_file)
     write_yaml(plan.changes, plan.results_dir / CHANGES_FILE_NAME)
 
-    # crop/ is rebuilt by the crop step; a leftover could hold another stride's window.
-    remove_experiment_outputs(work_dir)
+    # MintPy would reuse its own old outputs, and the export would pick up an old
+    # subpixel/, so the MintPy stage always starts empty.
+    remove_outputs(work_dir, MINTPY_STAGE_DIRS)
     sizes_before = log_sizes(work_dir / "logs")
 
-    run_command([sweep.pipeline.python, "-m", PIPELINE_MODULE, "run", config_file,
-                 "--steps", *PIPELINE_STEPS, *sweep.pipeline.extra_args],
-                cwd=sweep.pipeline.repo, log_message=f"[{plan.name}] pipeline")
+    dolphin_reused, dolphin_computed_by = run_dolphin_stage(sweep, plan, config_file, work_dir)
+    run_pipeline_steps(sweep, plan, config_file, MINTPY_STAGE_STEPS)
 
     export_command = [sweep.postprocessing.python, POSTPROCESSING_SCRIPT,
                       "--run-dir", work_dir, "--output-dir", plan.results_dir]
@@ -302,14 +394,15 @@ def run_experiment(sweep, plan, work_dir):
         "description": plan.description,
         "finished_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "duration_hours": round((time.time() - started) / 3600, 2),
+        "dolphin": "reused" if dolphin_reused else "computed",
+        "dolphin_computed_by_experiment": dolphin_computed_by,
         "parquet": parquet_file.name,
         "metadata": metadata_file.name,
     }
     (plan.results_dir / DONE_FILE_NAME).write_text(json.dumps(done, indent=2) + "\n")
 
-    removed = remove_experiment_outputs(work_dir)
-    logger.info("[%s] done in %.1f h; deleted %s", plan.name, done["duration_hours"],
-                ", ".join(path.name for path in removed))
+    remove_outputs(work_dir, MINTPY_STAGE_DIRS)
+    logger.info("[%s] done in %.1f h (dolphin %s)", plan.name, done["duration_hours"], done["dolphin"])
 
 
 def check_free_space(work_dir, min_free_gb):
@@ -330,8 +423,9 @@ def prepare_sweep(sweep, clean_stale=False):
     sweep : SweepConfig
         The loaded sweep file.
     clean_stale : bool
-        Delete dolphin/, mintpy/ and subpixel/ outputs left over from an earlier run
-        instead of refusing to start.
+        Delete outputs the sweep cannot vouch for (see ``find_stale_outputs``)
+        instead of refusing to start. A complete dolphin output from an earlier
+        sweep run is kept and reused if its settings match.
 
     Returns
     -------
@@ -352,13 +446,16 @@ def prepare_sweep(sweep, clean_stale=False):
     stale = find_stale_outputs(work_dir)
     if stale and not clean_stale:
         raise SweepError(
-            f"Old outputs exist: {[str(path) for path in stale]}. dolphin would reuse them instead "
-            "of computing the new settings. Save what you need, then start again with --clean-stale "
-            "to delete them."
+            f"Old outputs exist: {[str(path) for path in stale]}. They are incomplete or not made "
+            "by the sweep, and dolphin would reuse its files instead of computing the new settings. "
+            "Save what you need, then start again with --clean-stale to delete them."
         )
     if stale:
         logger.warning("Deleting old outputs: %s", ", ".join(str(path) for path in stale))
-        remove_experiment_outputs(work_dir)
+        names = [path.name for path in stale]
+        if "dolphin" in names:
+            names.append("crop")  # belongs to the same unverified dolphin output
+        remove_outputs(work_dir, names)
     return plans, work_dir
 
 
@@ -380,14 +477,25 @@ def run_sweep(sweep, clean_stale=False, dry_run=False):
         If a check or an experiment fails; later experiments are not started.
     """
     plans, work_dir = prepare_sweep(sweep, clean_stale=clean_stale)
-    todo = [plan for plan in plans if not plan.is_done]
     for plan in plans:
-        logger.info("%-30s %s", plan.name, "done, skipped" if plan.is_done else "to run")
+        if plan.is_done:
+            logger.info("%-30s done, skipped", plan.name)
+    todo = order_for_dolphin_reuse([plan for plan in plans if not plan.is_done])
+    reuse = plan_dolphin_reuse(todo, saved_dolphin_settings_key(work_dir))
+    for number, (plan, reused) in enumerate(zip(todo, reuse), start=1):
+        logger.info("%2d. %-30s dolphin: %s", number, plan.name, "reuse" if reused else "compute")
+    logger.info("%d experiments to run, dolphin computed %d times.", len(todo), reuse.count(False))
     if dry_run:
-        logger.info("Dry run: %d of %d experiments would run.", len(todo), len(plans))
+        logger.info("Dry run: nothing was run.")
         return
+
     for number, plan in enumerate(todo, start=1):
         check_free_space(work_dir, sweep.min_free_gb)
         logger.info("=== Experiment %d/%d: %s ===", number, len(todo), plan.name)
         run_experiment(sweep, plan, work_dir)
+
+    if todo and not sweep.keep_dolphin_after_sweep:
+        removed = remove_experiment_outputs(work_dir)
+        logger.info("Deleted %s (keep_dolphin_after_sweep: false)",
+                    ", ".join(path.name for path in removed) or "nothing")
     logger.info("Sweep finished: %d experiments run, results in %s", len(todo), sweep.results_dir)

@@ -64,6 +64,9 @@ class SweepConfig:
     area_name: Optional[str] = None
     keep_paths: tuple = DEFAULT_KEEP_PATHS
     min_free_gb: float = DEFAULT_MIN_FREE_GB
+    # Keep crop/ and dolphin/ after the last experiment, so experiments added
+    # later with the same dolphin settings can reuse them (costs disk space).
+    keep_dolphin_after_sweep: bool = False
 
 
 def merge_changes(base, changes):
@@ -239,12 +242,15 @@ def load_sweep(sweep_file):
     sweep_file = Path(sweep_file).expanduser().resolve()
     raw = read_yaml(sweep_file)
     known = {"base_config", "results_dir", "area_name", "pipeline", "postprocessing",
-             "keep_paths", "min_free_gb", "experiments"}
+             "keep_paths", "min_free_gb", "keep_dolphin_after_sweep", "experiments"}
     unknown = set(raw) - known
     if unknown:
         raise SweepConfigError(f"Unknown option(s) in the sweep file: {sorted(unknown)}")
 
     sweep_dir = sweep_file.parent
+    keep_dolphin = raw.get("keep_dolphin_after_sweep", False)
+    if not isinstance(keep_dolphin, bool):
+        raise SweepConfigError(f"keep_dolphin_after_sweep must be true or false, got {keep_dolphin!r}.")
     keep_paths = raw.get("keep_paths", list(DEFAULT_KEEP_PATHS)) or []
     for keep_path in keep_paths:
         if Path(keep_path).is_absolute() or ".." in Path(keep_path).parts:
@@ -261,4 +267,5 @@ def load_sweep(sweep_file):
         area_name=raw.get("area_name") or None,
         keep_paths=tuple(str(keep_path) for keep_path in keep_paths),
         min_free_gb=float(raw.get("min_free_gb", DEFAULT_MIN_FREE_GB)),
+        keep_dolphin_after_sweep=keep_dolphin,
     )

@@ -18,22 +18,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # runner, and "python -c <validation code> <config>" for the config check
 # (both are run from the fake repo, so the fake package is imported).
 FAKE_PIPELINE_MAIN = '''
-import sys, yaml
+import json, sys, yaml
 from pathlib import Path
 config_file = Path(sys.argv[2])
 config = yaml.safe_load(config_file.read_text())
+steps = sys.argv[sys.argv.index("--steps") + 1:]
 work_dir = Path(config["paths"]["work_dir"])
-if config["dolphin"].get("fail"):
+if config["dolphin"].get("fail") and "dolphin" in steps:
     sys.exit(3)
-for name in ("crop", "dolphin", "mintpy/pic"):
-    (work_dir / name).mkdir(parents=True, exist_ok=True)
-if (config.get("subpixel") or {}).get("enabled") and "subpixel" in sys.argv:
+if (config.get("mintpy") or {}).get("fail") and "mintpy" in steps:
+    sys.exit(4)
+if "crop" in steps:
+    (work_dir / "crop").mkdir(parents=True, exist_ok=True)
+if "dolphin" in steps:
+    (work_dir / "dolphin").mkdir(parents=True, exist_ok=True)
+    with open(work_dir / "logs" / "dolphin_runs.txt", "a") as runs:
+        runs.write(json.dumps(config["dolphin"], sort_keys=True) + "\\n")
+if "mintpy" in steps:
+    if not (work_dir / "dolphin").is_dir():
+        sys.exit(5)  # like the real pipeline: MintPy needs dolphin's output
+    (work_dir / "mintpy" / "pic").mkdir(parents=True, exist_ok=True)
+    (work_dir / "mintpy" / "pic" / "velocity.png").write_text("png")
+if "subpixel" in steps and (config.get("subpixel") or {}).get("enabled"):
     (work_dir / "subpixel").mkdir(exist_ok=True)
-(work_dir / "mintpy" / "pic" / "velocity.png").write_text("png")
 (work_dir / "pipeline_config.yaml").write_text(config_file.read_text())
 with open(work_dir / "logs" / "pipeline.log", "a") as log:
-    log.write(f"run with {config['dolphin']} inversion={config.get('inversion')} "
-              f"steps={sys.argv[sys.argv.index('--steps') + 1:]}\\n")
+    log.write(f"run with {config['dolphin']} inversion={config.get('inversion')} steps={steps}\\n")
 '''
 
 FAKE_CONFIG_MODULE = '''

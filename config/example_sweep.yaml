@@ -28,6 +28,12 @@ keep_paths: [mintpy/pic]
 # An experiment only starts if the work_dir disk has at least this much free space.
 min_free_gb: 300
 
+# Experiments with the same dolphin settings (all sections except mintpy and
+# subpixel) reuse crop/ and dolphin/ and only rerun MintPy. After the last
+# experiment both are deleted, unless this is true: then experiments added
+# later with the same dolphin settings can start with MintPy right away.
+keep_dolphin_after_sweep: false
+
 # Each experiment: a unique name (becomes the folder name) and only the options
 # that differ from base_config, in the same nested layout as pipeline.yaml.
 # Allowed sections: dolphin, mintpy, inversion, water_mask, subpixel. paths, aoi

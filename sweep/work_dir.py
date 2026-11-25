@@ -1,22 +1,32 @@
 """Checks and clean-up of the pipeline's work directory between experiments.
 
 All experiments share one work directory (``paths.work_dir``). Its ``isce/``
-folder and ``logs/`` stay; ``crop/``, ``dolphin/``, ``mintpy/`` and ``subpixel/``
-belong to the current experiment and are deleted after its results are saved.
+folder and ``logs/`` always stay. The other outputs come in two stages:
+
+- dolphin stage: ``crop/`` and ``dolphin/``. They depend on every config
+  section except ``mintpy`` and ``subpixel``. After a successful dolphin stage
+  the sweep writes ``dolphin/sweep_dolphin_settings.json`` with those settings,
+  so a later experiment with the same settings can reuse the output.
+- MintPy stage: ``mintpy/`` and ``subpixel/``. They are rebuilt for every
+  experiment and deleted after its results are saved.
 """
 
+import json
 import shutil
 from pathlib import Path
 
-# Folders created by the crop, dolphin, MintPy and subpixel steps of one experiment.
-# crop/ is small, but its window depends on dolphin's strides and its water
-# fraction on the water_mask options, so it is rebuilt for every experiment.
-EXPERIMENT_OUTPUT_DIRS = ("crop", "dolphin", "mintpy", "subpixel")
+DOLPHIN_STAGE_DIRS = ("crop", "dolphin")
+MINTPY_STAGE_DIRS = ("mintpy", "subpixel")
+EXPERIMENT_OUTPUT_DIRS = DOLPHIN_STAGE_DIRS + MINTPY_STAGE_DIRS
 
-# Outputs left over from an earlier run. dolphin would reuse its files silently,
-# and the export would pick up an old subpixel/ in an experiment without the
-# subpixel step, so the sweep refuses to start while they exist.
-STALE_OUTPUT_DIRS = ("dolphin", "mintpy", "subpixel")
+# Config sections that only the MintPy and subpixel steps read. Every other
+# section (dolphin, water_mask, inversion, paths, aoi, isce) can change the
+# crop or dolphin output, so it is part of the dolphin settings.
+MINTPY_STAGE_SECTIONS = ("mintpy", "subpixel")
+
+# Written into dolphin/ after a successful dolphin stage. Its existence means the
+# dolphin output is complete; its content says which settings produced it.
+DOLPHIN_SETTINGS_FILE = "sweep_dolphin_settings.json"
 
 BYTES_PER_GB = 1024 ** 3
 
@@ -50,15 +60,63 @@ def check_isce_finished(work_dir):
         )
 
 
+def dolphin_settings_key(config):
+    """Return the settings that determine the dolphin output, as comparable text.
+
+    The key is the pipeline config without the MintPy-stage sections, written as
+    JSON with sorted keys, so two configs give the same key exactly when their
+    crop and dolphin outputs would be the same.
+    """
+    settings = {section: value for section, value in config.items()
+                if section not in MINTPY_STAGE_SECTIONS}
+    return json.dumps(settings, sort_keys=True, default=str)
+
+
+def save_dolphin_settings(work_dir, config, experiment_name):
+    """Mark the dolphin output in ``work_dir`` as complete and record its settings."""
+    record = {"computed_by_experiment": experiment_name,
+              "settings": json.loads(dolphin_settings_key(config))}
+    (Path(work_dir) / "dolphin" / DOLPHIN_SETTINGS_FILE).write_text(json.dumps(record, indent=2) + "\n")
+
+
+def read_dolphin_settings(work_dir):
+    """Return the record written by ``save_dolphin_settings``, or None.
+
+    None means there is no dolphin output, or it is not known to be complete
+    (e.g. the dolphin step was interrupted, or it was not made by the sweep).
+    """
+    settings_file = Path(work_dir) / "dolphin" / DOLPHIN_SETTINGS_FILE
+    if not settings_file.is_file():
+        return None
+    return json.loads(settings_file.read_text())
+
+
+def saved_dolphin_settings_key(work_dir):
+    """Return the settings key of the complete dolphin output in ``work_dir``, or None."""
+    record = read_dolphin_settings(work_dir)
+    if record is None:
+        return None
+    return json.dumps(record["settings"], sort_keys=True, default=str)
+
+
 def find_stale_outputs(work_dir):
-    """Return the dolphin/MintPy output folders that already exist in ``work_dir``."""
-    return [Path(work_dir) / name for name in STALE_OUTPUT_DIRS if (Path(work_dir) / name).exists()]
+    """Return outputs in ``work_dir`` that the sweep cannot vouch for.
+
+    These are ``mintpy/`` and ``subpixel/`` (always rebuilt, but possibly a
+    manual run you want to keep) and a ``dolphin/`` without the sweep's settings
+    file (incomplete or of unknown settings; dolphin would silently reuse its
+    files). A complete dolphin output from an earlier sweep run is not stale:
+    it is reused or replaced automatically.
+    """
+    work_dir = Path(work_dir)
+    stale = [work_dir / name for name in MINTPY_STAGE_DIRS if (work_dir / name).exists()]
+    if (work_dir / "dolphin").exists() and read_dolphin_settings(work_dir) is None:
+        stale.append(work_dir / "dolphin")
+    return stale
 
 
-def remove_experiment_outputs(work_dir):
-    """Delete ``crop/``, ``dolphin/``, ``mintpy/`` and ``subpixel/`` in ``work_dir``.
-
-    Only these folders are touched; ``isce/`` and ``logs/`` stay.
+def remove_outputs(work_dir, names):
+    """Delete the given output folders of ``work_dir``; ``isce/`` and ``logs/`` are never touched.
 
     Returns
     -------
@@ -66,7 +124,9 @@ def remove_experiment_outputs(work_dir):
         The folders that were deleted.
     """
     removed = []
-    for name in EXPERIMENT_OUTPUT_DIRS:
+    for name in names:
+        if name not in EXPERIMENT_OUTPUT_DIRS:
+            raise ValueError(f"Refusing to delete '{name}': not an experiment output folder.")
         folder = Path(work_dir) / name
         if folder.is_symlink():
             folder.unlink()
@@ -76,6 +136,11 @@ def remove_experiment_outputs(work_dir):
             continue
         removed.append(folder)
     return removed
+
+
+def remove_experiment_outputs(work_dir):
+    """Delete ``crop/``, ``dolphin/``, ``mintpy/`` and ``subpixel/`` in ``work_dir``."""
+    return remove_outputs(work_dir, EXPERIMENT_OUTPUT_DIRS)
 
 
 def free_space_gb(path):
