@@ -1,21 +1,22 @@
 """Checks and clean-up of the pipeline's work directory between experiments.
 
 All experiments share one work directory (``paths.work_dir``). Its ``isce/``
-folder and ``logs/`` stay; ``crop/``, ``dolphin/`` and ``mintpy/`` belong to the
-current experiment and are deleted after its results are saved.
+folder and ``logs/`` stay; ``crop/``, ``dolphin/``, ``mintpy/`` and ``subpixel/``
+belong to the current experiment and are deleted after its results are saved.
 """
 
 import shutil
 from pathlib import Path
 
-# Folders created by the crop, dolphin and MintPy steps of one experiment.
+# Folders created by the crop, dolphin, MintPy and subpixel steps of one experiment.
 # crop/ is small, but its window depends on dolphin's strides and its water
 # fraction on the water_mask options, so it is rebuilt for every experiment.
-EXPERIMENT_OUTPUT_DIRS = ("crop", "dolphin", "mintpy")
+EXPERIMENT_OUTPUT_DIRS = ("crop", "dolphin", "mintpy", "subpixel")
 
-# dolphin and MintPy outputs left over from an earlier run. dolphin would reuse
-# them silently, so the sweep refuses to start while they exist.
-STALE_OUTPUT_DIRS = ("dolphin", "mintpy")
+# Outputs left over from an earlier run. dolphin would reuse its files silently,
+# and the export would pick up an old subpixel/ in an experiment without the
+# subpixel step, so the sweep refuses to start while they exist.
+STALE_OUTPUT_DIRS = ("dolphin", "mintpy", "subpixel")
 
 BYTES_PER_GB = 1024 ** 3
 
@@ -55,9 +56,9 @@ def find_stale_outputs(work_dir):
 
 
 def remove_experiment_outputs(work_dir):
-    """Delete ``crop/``, ``dolphin/`` and ``mintpy/`` in ``work_dir``.
+    """Delete ``crop/``, ``dolphin/``, ``mintpy/`` and ``subpixel/`` in ``work_dir``.
 
-    Only these three folders are touched; ``isce/`` and ``logs/`` stay.
+    Only these folders are touched; ``isce/`` and ``logs/`` stay.
 
     Returns
     -------

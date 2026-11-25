@@ -17,10 +17,10 @@ from typing import Optional
 
 import yaml
 
-# Sections an experiment may change. They only affect the crop, dolphin and
-# MintPy steps, which every experiment runs again. paths, aoi and isce would
-# need a new ISCE2 stack; subpixel is not part of the sweep workflow.
-CHANGEABLE_SECTIONS = ("dolphin", "mintpy", "inversion", "water_mask")
+# Sections an experiment may change. They only affect the crop, dolphin, MintPy
+# and subpixel steps, which every experiment runs again. paths, aoi and isce
+# would need a new ISCE2 stack.
+CHANGEABLE_SECTIONS = ("dolphin", "mintpy", "inversion", "water_mask", "subpixel")
 
 # Experiment names become folder names, so only safe characters are allowed.
 EXPERIMENT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")

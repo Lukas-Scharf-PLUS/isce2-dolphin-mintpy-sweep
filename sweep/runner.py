@@ -3,10 +3,11 @@
 For every experiment that is not finished yet:
 
 1. write its full pipeline config (default + changes) into its results folder,
-2. run the pipeline steps crop, dolphin and mintpy,
+2. run the pipeline steps crop, dolphin, mintpy and subpixel (the pipeline
+   skips subpixel unless ``subpixel.enabled: true``),
 3. export the result with the postprocessing (Parquet + metadata JSON),
 4. save the experiment's part of the pipeline logs and the ``keep_paths``,
-5. write the ``DONE`` marker, then delete crop/, dolphin/ and mintpy/.
+5. write the ``DONE`` marker, then delete crop/, dolphin/, mintpy/ and subpixel/.
 
 Before the first experiment, every experiment config is checked with the
 pipeline's own config loader, so a typo fails at once and not after hours.
@@ -34,7 +35,8 @@ from .work_dir import (
 
 logger = logging.getLogger(__name__)
 
-PIPELINE_STEPS = ("crop", "dolphin", "mintpy")
+# subpixel only runs with subpixel.enabled: true; otherwise the pipeline logs a skip.
+PIPELINE_STEPS = ("crop", "dolphin", "mintpy", "subpixel")
 PIPELINE_MODULE = "isce_dolphin_mintpy"
 POSTPROCESSING_SCRIPT = "run_postprocessing.py"
 
@@ -328,7 +330,7 @@ def prepare_sweep(sweep, clean_stale=False):
     sweep : SweepConfig
         The loaded sweep file.
     clean_stale : bool
-        Delete dolphin/ and mintpy/ outputs left over from an earlier run
+        Delete dolphin/, mintpy/ and subpixel/ outputs left over from an earlier run
         instead of refusing to start.
 
     Returns

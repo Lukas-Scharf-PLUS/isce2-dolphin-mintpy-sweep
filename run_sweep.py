@@ -4,7 +4,7 @@ Usage::
 
     python run_sweep.py <sweep.yaml>                 # run all unfinished experiments
     python run_sweep.py <sweep.yaml> --dry-run       # only check and list them
-    python run_sweep.py <sweep.yaml> --clean-stale   # delete old dolphin/mintpy outputs first
+    python run_sweep.py <sweep.yaml> --clean-stale   # delete old dolphin/mintpy/subpixel outputs first
 """
 
 import argparse
@@ -24,7 +24,7 @@ def parse_arguments(argv=None):
     parser.add_argument("--dry-run", action="store_true",
                         help="Check everything and list the experiments, but run nothing.")
     parser.add_argument("--clean-stale", action="store_true",
-                        help="Delete dolphin/ and mintpy/ left over from an earlier run before starting.")
+                        help="Delete dolphin/, mintpy/ and subpixel/ left over from an earlier run before starting.")
     return parser.parse_args(argv)
 
 

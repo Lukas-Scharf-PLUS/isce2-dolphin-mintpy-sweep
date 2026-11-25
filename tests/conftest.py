@@ -27,10 +27,13 @@ if config["dolphin"].get("fail"):
     sys.exit(3)
 for name in ("crop", "dolphin", "mintpy/pic"):
     (work_dir / name).mkdir(parents=True, exist_ok=True)
+if (config.get("subpixel") or {}).get("enabled") and "subpixel" in sys.argv:
+    (work_dir / "subpixel").mkdir(exist_ok=True)
 (work_dir / "mintpy" / "pic" / "velocity.png").write_text("png")
 (work_dir / "pipeline_config.yaml").write_text(config_file.read_text())
 with open(work_dir / "logs" / "pipeline.log", "a") as log:
-    log.write(f"run with {config['dolphin']}\\n")
+    log.write(f"run with {config['dolphin']} inversion={config.get('inversion')} "
+              f"steps={sys.argv[sys.argv.index('--steps') + 1:]}\\n")
 '''
 
 FAKE_CONFIG_MODULE = '''

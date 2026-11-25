@@ -91,3 +91,35 @@ def test_too_little_free_space_stops_the_sweep(sweep_setup):
     sweep.min_free_gb = 10 ** 9
     with pytest.raises(SweepError, match="min_free_gb"):
         run_sweep(sweep)
+
+
+def _set_experiments(sweep_setup, experiments):
+    """Replace the experiments of the fixture's sweep file."""
+    raw = yaml.safe_load(sweep_setup["sweep_file"].read_text())
+    raw["experiments"] = experiments
+    sweep_setup["sweep_file"].write_text(yaml.safe_dump(raw))
+
+
+def test_inversion_and_subpixel_can_change_per_experiment(sweep_setup):
+    _set_experiments(sweep_setup, [
+        {"name": "dolphin-inversion", "changes": {"inversion": "dolphin"}},
+        {"name": "with-subpixel", "changes": {"subpixel": {"enabled": True}}},
+    ])
+    run_sweep(load_sweep(sweep_setup["sweep_file"]))
+
+    results = sweep_setup["results_dir"]
+    config = yaml.safe_load((results / "dolphin-inversion" / "pipeline.yaml").read_text())
+    assert config["inversion"] == "dolphin"
+    log = (results / "dolphin-inversion" / "logs" / "pipeline.log").read_text()
+    assert "inversion=dolphin" in log
+    assert "steps=['crop', 'dolphin', 'mintpy', 'subpixel']" in log
+    config = yaml.safe_load((results / "with-subpixel" / "pipeline.yaml").read_text())
+    assert config["subpixel"] == {"enabled": True}
+    # subpixel/ is deleted with the other outputs after the export.
+    assert not (sweep_setup["work_dir"] / "subpixel").exists()
+
+
+def test_stale_subpixel_output_blocks_the_start(sweep_setup):
+    (sweep_setup["work_dir"] / "subpixel").mkdir()
+    with pytest.raises(SweepError, match="subpixel"):
+        run_sweep(load_sweep(sweep_setup["sweep_file"]))

@@ -7,11 +7,13 @@ dolphin or MintPy options it changes; all other options stay as in the default. 
 runs exactly the same workflow:
 
 1. write the experiment's full config (default + changes),
-2. run the pipeline steps `crop`, `dolphin`, `mintpy`,
+2. run the pipeline steps `crop`, `dolphin`, `mintpy` and `subpixel` (the pipeline skips `subpixel` unless
+   `subpixel.enabled: true`),
 3. export the result with [isce2-dolphin-minpty_postprocessing](../isce2-dolphin-minpty_postprocessing)
    (GeoParquet + metadata JSON),
 4. save it in `<results_dir>/<experiment name>/`,
-5. delete `crop/`, `dolphin/` and `mintpy/`, so the disk only ever holds one experiment's intermediate outputs.
+5. delete `crop/`, `dolphin/`, `mintpy/` and `subpixel/`, so the disk only ever holds one experiment's
+   intermediate outputs.
 
 All experiments share one ISCE2 stack, which must be finished before the sweep starts.
 
@@ -52,7 +54,7 @@ python run_sweep.py /media/ssd2tb/lukas/ADUCAT/configs/sweep_S1_073_ASC.yaml    
 | Option | Meaning |
 | --- | --- |
 | `--dry-run` | Run all checks and list which experiments would run, without running anything |
-| `--clean-stale` | Delete `dolphin/` and `mintpy/` left over from an earlier run before starting |
+| `--clean-stale` | Delete `dolphin/`, `mintpy/` and `subpixel/` left over from an earlier run before starting |
 
 **Adding experiments later:** append them to the sweep file and start the same command again. Finished
 experiments (their folder has `DONE.json`) are skipped. The same applies after a crash or reboot.
@@ -86,8 +88,13 @@ How changes are merged into the default:
 - Mappings are merged key by key at every level, so `half_window: {x: 11}` changes only `x` and keeps `y`.
 - Any other value replaces the default as a whole, including lists (`ntiles: [1, 1]`) and `null`.
 - `mintpy.*` options are single keys, exactly as in `pipeline.yaml`.
-- Only `dolphin`, `mintpy`, `inversion` and `water_mask` may change. `paths`, `aoi` and `isce` would need a new
-  ISCE2 stack, so the sweep refuses them.
+- Only `dolphin`, `mintpy`, `inversion`, `water_mask` and `subpixel` may change. `paths`, `aoi` and `isce` would
+  need a new ISCE2 stack, so the sweep refuses them.
+- `inversion: dolphin` (top level) lets dolphin invert the time series; MintPy then only applies the corrections
+  that are switched on in the `mintpy` section (e.g. `mintpy.deramp`, `mintpy.topographicResidual`). Unwrapping
+  errors are not corrected in that mode. `inversion: mintpy` (default) uses MintPy's network inversion.
+- `subpixel: {enabled: true}` adds the sub-pixel PS positions and their shift in meters to the Parquet file
+  (columns `lon_subpixel`, `lat_subpixel`, `shift_east`, `shift_north`, ...; see the postprocessing README).
 - Experiment names become folder names: letters, digits, `_`, `-` and `.` only, each name once.
 
 ## Results
@@ -117,8 +124,9 @@ Before the first experiment, `run_sweep.py` checks everything that could otherwi
 - that every ISCE2 run file is marked done in `isce/run_status/`,
 - **every experiment's config with the pipeline's own config loader**, so a typo in a dolphin or MintPy option
   stops the sweep at once,
-- that no old `dolphin/` or `mintpy/` exists in the work directory. dolphin skips work whose output files already
-  exist, so it would silently reuse results computed with other settings.
+- that no old `dolphin/`, `mintpy/` or `subpixel/` exists in the work directory. dolphin skips work whose output
+  files already exist, so it would silently reuse results computed with other settings, and the export would
+  pick up an old `subpixel/` in an experiment that does not run the subpixel step.
 
 Then, per experiment, it checks the free disk space and runs the workflow above. `crop/` is also rebuilt for
 every experiment: it is small and fast, but its window depends on dolphin's `strides` and its water fraction on

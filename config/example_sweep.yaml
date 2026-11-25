@@ -22,7 +22,7 @@ postprocessing:
   extra_args: []                  # e.g. ["--all-pixels"]
 
 # Outputs (relative to paths.work_dir) copied into the results folder before
-# crop/, dolphin/ and mintpy/ are deleted. Default: MintPy's figures.
+# crop/, dolphin/, mintpy/ and subpixel/ are deleted. Default: MintPy's figures.
 keep_paths: [mintpy/pic]
 
 # An experiment only starts if the work_dir disk has at least this much free space.
@@ -30,8 +30,8 @@ min_free_gb: 300
 
 # Each experiment: a unique name (becomes the folder name) and only the options
 # that differ from base_config, in the same nested layout as pipeline.yaml.
-# Allowed sections: dolphin, mintpy, inversion, water_mask. paths, aoi and isce
-# must stay the same, because all experiments share one ISCE2 stack.
+# Allowed sections: dolphin, mintpy, inversion, water_mask, subpixel. paths, aoi
+# and isce must stay the same, because all experiments share one ISCE2 stack.
 experiments:
   - name: baseline
     description: base_config unchanged, as reference for the other experiments
@@ -52,3 +52,14 @@ experiments:
           unwrap_method: snaphu
       mintpy:
         mintpy.deramp: linear     # mintpy.* keys are single keys, as in pipeline.yaml
+
+  - name: dolphin-inversion
+    description: dolphin inverts the time series; MintPy only applies the corrections set below
+    changes:
+      inversion: dolphin          # top-level option: mintpy (default) or dolphin
+
+  - name: baseline_subpixel
+    description: as baseline, plus sub-pixel PS positions in the Parquet file
+    changes:
+      subpixel:
+        enabled: true
