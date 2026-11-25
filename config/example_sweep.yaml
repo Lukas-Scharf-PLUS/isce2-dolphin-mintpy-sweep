@@ -1,0 +1,54 @@
+# Example sweep file: one default pipeline config plus a list of experiments.
+# Run with:  python run_sweep.py config/example_sweep.yaml
+# Relative paths are resolved against the folder of this file.
+
+# The default pipeline.yaml. Every experiment starts from it.
+base_config: /path/to/configs/pipeline.yaml
+
+# One folder per experiment is created here: <results_dir>/<experiment name>/
+results_dir: /path/to/results/S1_073_ASC
+
+# Added to the Parquet file name and the metadata (optional).
+area_name: vienna
+
+# The pipeline and the postprocessing run in their own conda environments.
+# 'python' is the Python of that environment (<env>/bin/python).
+pipeline:
+  repo: /path/to/code/isce2-dolphin-mintpy
+  python: /path/to/envs/isce2-dolphin-mintpy/bin/python
+postprocessing:
+  repo: /path/to/code/isce2-dolphin-minpty_postprocessing
+  python: /path/to/envs/mintpy-postprocessing/bin/python
+  extra_args: []                  # e.g. ["--all-pixels"]
+
+# Outputs (relative to paths.work_dir) copied into the results folder before
+# crop/, dolphin/ and mintpy/ are deleted. Default: MintPy's figures.
+keep_paths: [mintpy/pic]
+
+# An experiment only starts if the work_dir disk has at least this much free space.
+min_free_gb: 300
+
+# Each experiment: a unique name (becomes the folder name) and only the options
+# that differ from base_config, in the same nested layout as pipeline.yaml.
+# Allowed sections: dolphin, mintpy, inversion, water_mask. paths, aoi and isce
+# must stay the same, because all experiments share one ISCE2 stack.
+experiments:
+  - name: baseline
+    description: base_config unchanged, as reference for the other experiments
+
+  - name: hw11x5
+    description: smaller phase-linking window
+    changes:
+      dolphin:
+        phase_linking:
+          half_window: {x: 11, y: 5}
+
+  - name: hw11x5_snaphu_linear-ramp
+    changes:
+      dolphin:
+        phase_linking:
+          half_window: {x: 11, y: 5}
+        unwrap_options:
+          unwrap_method: snaphu
+      mintpy:
+        mintpy.deramp: linear     # mintpy.* keys are single keys, as in pipeline.yaml
